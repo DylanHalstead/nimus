@@ -168,12 +168,10 @@ func (r *Router) GenerateOpenAPI(config OpenAPIConfig) *OpenAPISpec {
 
 // generatePathsFromRoutes processes routes and generates OpenAPI paths
 func (r *Router) generatePathsFromRoutes(spec *OpenAPISpec) {
-	// Acquire read lock for safe concurrent access
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	table := r.table.Load().(*routingTable)
 
 	// Iterate through all methods and their route trees
-	for method, tree := range r.trees {
+	for method, tree := range table.trees {
 		// Collect all routes from the tree
 		routes := tree.collectRoutes()
 
