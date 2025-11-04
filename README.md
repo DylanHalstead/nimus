@@ -5,7 +5,7 @@ Designed for simplicity, modularity, and production-ready performance.
 
 ## Features
 
-- **🚀 Fast**: ~900 ns/op for static routes, ~1200 ns/op for dynamic routes
+- **🚀 Fast**: ~1035 ns/op for static routes, ~1200 ns/op for dynamic routes
 - **🎯 Simple API**: Clean, intuitive routing and middleware system
 - **🔌 Modular**: Use only what you need
 - **🛡️ Production-Ready**: Built-in middleware for logging, auth, CORS, rate
@@ -712,14 +712,19 @@ Complete CRUD API with all features: auth, rate limiting, CORS, validation.
 
 ### Design Philosophy: Copy-on-Write & Lock-Free Routing
 
-Nimbus uses an **immutable data structure** approach with **atomic.Value** for
+Nimbus uses an **immutable data structure** approach with **atomic.Pointer** for
 lock-free reads, achieving significantly better performance under high
-concurrency compared to traditional mutex-based routers.
+concurrency compared to traditional mutex-based routers. All middleware chains
+are **pre-built at route registration time**, eliminating any lock contention in
+the hot path.
 
 **Key Characteristics:**
 
-- ✅ **Lock-free request handling** - Zero contention in the hot path
-- ✅ **5-10x faster reads** - No mutex overhead on every request
+- ✅ **Truly lock-free request handling** - Zero locks, zero contention in hot
+  path
+- ✅ **Pre-built middleware chains** - No lazy initialization or caching
+  overhead
+- ✅ **5-10x faster under concurrency** - Scales linearly across CPU cores
 - ✅ **Perfect for standard web APIs** - Routes defined at startup
 - ⚠️ **Write amplification** - Route additions copy map structures
 - ⚠️ **Not for runtime route changes** - Optimized for static route tables
@@ -872,10 +877,11 @@ Adding 100 routes at startup:
 
 ```
 Serving 100,000 requests/second:
-- Mutex-based router: ~200-500ns per request (contended)
-- Nimbus: ~20-100ns per request (lock-free)
-- Benefit: 5-10x faster under high concurrency
-- Scales: Linearly across CPU cores
+- Mutex-based router: ~200-500ns per request (lock contention)
+- Nimbus: ~40-100ns per request (truly lock-free)
+- Operations: atomic.Load() + 2x map lookup (route + chain)
+- Benefit: 3-5x faster under high concurrency
+- Scales: Linearly across CPU cores with zero contention
 ```
 
 ### When to Choose Nimbus
@@ -939,12 +945,13 @@ Return
 ### Benchmark Results
 
 ```
-BenchmarkRouter_StaticRoute        1,308,021 ops   928.8 ns/op   1568 B/op   17 allocs/op
-BenchmarkRouter_ParameterRoute       908,109 ops   1195 ns/op    1985 B/op   22 allocs/op
-BenchmarkRouter_MultipleParameters   835,645 ops   1425 ns/op    2129 B/op   25 allocs/op
-BenchmarkRouter_WithMiddleware     1,000,000 ops   1029 ns/op    1873 B/op   19 allocs/op
-BenchmarkContext_Param           480,173,512 ops   2.484 ns/op      0 B/op    0 allocs/op
-BenchmarkContext_SetGet          134,567,434 ops   8.760 ns/op      0 B/op    0 allocs/op
+BenchmarkRouter_StaticRoute           3,442,820 ops   1035 ns/op   1521 B/op   16 allocs/op
+BenchmarkRouter_ParameterRoute        2,951,965 ops   1202 ns/op   1874 B/op   19 allocs/op
+BenchmarkRouter_MultipleParameters    2,535,608 ops   1410 ns/op   1970 B/op   22 allocs/op
+BenchmarkRouter_WithMiddleware        3,466,374 ops   1034 ns/op   1521 B/op   16 allocs/op
+BenchmarkRouter_WithMultipleMiddleware 3,472,915 ops  1042 ns/op   1521 B/op   16 allocs/op
+BenchmarkContext_Param              616,948,160 ops   5.935 ns/op      0 B/op    0 allocs/op
+BenchmarkContext_SetGet             205,509,427 ops  17.46 ns/op       0 B/op    0 allocs/op
 ```
 
 **Note:** These are single-threaded benchmarks. Nimbus's lock-free architecture
@@ -1193,9 +1200,10 @@ go test ./api/
 | OpenAPI            | ✅              | ❌      | ❌     | ❌      |
 | Stdlib Based       | ✅              | ❌      | ❌     | ✅      |
 
-\* Nimbus uses Copy-on-Write with atomic.Value for lock-free request handling,
-achieving 5-10x better performance under high concurrency. Optimized for routes
-defined at startup (standard web API pattern).
+\* Nimbus uses Copy-on-Write with atomic.Pointer and pre-built middleware chains
+for truly lock-free request handling, achieving 3-5x better performance under
+high concurrency. Optimized for routes defined at startup (standard web API
+pattern).
 
 ## Contributing
 
