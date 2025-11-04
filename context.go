@@ -29,8 +29,9 @@ var contextPool = sync.Pool{
 	},
 }
 
-// A wrapper around http request/response with helpers.
-// It is used to pass data between middleware and handlers and is request-scoped.
+// Context is a wrapper around http request/response with helpers.
+// Access context.Context via c.Request.Context() for cancellation, timeouts, and tracing.
+// It is request-scoped and should be passed through the handler chain.
 type Context struct {
 	Writer  http.ResponseWriter
 	Request *http.Request
@@ -42,7 +43,9 @@ type Context struct {
 	values map[string]any
 }
 
-// Grab context from the pool and initialize it.
+// NewContext grabs a context from the pool and initializes it.
+// Access context.Context via ctx.Request.Context() for cancellation,
+// timeouts, and distributed tracing.
 func NewContext(w http.ResponseWriter, r *http.Request) *Context {
 	ctx := contextPool.Get().(*Context)
 	ctx.Writer = w

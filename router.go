@@ -45,23 +45,23 @@ type TypedRequest[P any, B any, Q any] struct {
 type HandlerFuncTyped[P any, B any, Q any] func(*Context, *TypedRequest[P, B, Q]) (any, int, error)
 
 // routingTable is an immutable snapshot of routing configuration.
-// Once created and stored in atomic.Value, it should never be modified.
+// Once created and stored in atomic.Pointer, it should never be modified.
 // This enables lock-free concurrent reads with zero contention.
 type routingTable struct {
 	exactRoutes map[string]map[string]*Route // Method -> Path -> Route (O(1) lookup for static routes)
 	trees       map[string]*tree             // Method -> radix tree (fallback for dynamic routes)
-	middlewares []MiddlewareFunc             // Global middleware stack
+	middlewares []MiddlewareFunc             // Middleware stack for the router; reads last-in first-out (LIFO)
 	gen         uint64                       // Generation counter for cache invalidation
 	notFound    HandlerFunc                  // 404 handler
 }
 
 // Router handles HTTP routing with middleware support.
-// Uses atomic.Value for lock-free reads, achieving ~23x better performance
+// Uses atomic.Pointer for lock-free, type-safe reads, achieving ~23x better performance
 // under concurrent load compared to sync.RWMutex.
 type Router struct {
-	table        atomic.Value // *routingTable (immutable, lock-free reads)
-	mu           sync.Mutex   // Only protects writes (route registration, middleware changes)
-	cleanupFuncs []func()     // Functions to call on Shutdown (e.g., rate limiter cleanup)
+	table        atomic.Pointer[routingTable] // Immutable routing table (lock-free, type-safe reads)
+	mu           sync.Mutex                   // Only protects writes (route registration, middleware changes)
+	cleanupFuncs []func()                     // Functions to call on Shutdown (e.g., rate limiter cleanup)
 }
 
 // Route represents a single route with its middleware chain
@@ -78,7 +78,7 @@ type Route struct {
 	cacheMu     sync.RWMutex // Protects cached chain access
 }
 
-// NewRouter creates a new router instance with atomic.Value for lock-free reads
+// NewRouter creates a new router instance with atomic.Pointer for lock-free, type-safe reads
 func NewRouter() *Router {
 	r := &Router{}
 	
@@ -103,8 +103,8 @@ func (r *Router) Use(middleware ...MiddlewareFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	
-	// Load current immutable table
-	old := r.table.Load().(*routingTable)
+	// Load current immutable table (type-safe, no assertion needed)
+	old := r.table.Load()
 	
 	// Create new immutable table with updated middlewares
 	newMiddlewares := make([]MiddlewareFunc, len(old.middlewares)+len(middleware))
@@ -131,8 +131,8 @@ func (r *Router) AddRoute(method, path string, handler HandlerFunc, middleware .
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Load current table
-	old := r.table.Load().(*routingTable)
+	// Load current table (type-safe, no assertion needed)
+	old := r.table.Load()
 
 	// Create route object
 	route := &Route{
@@ -221,7 +221,7 @@ func (r *Router) WithMetadata(method, path string, metadata RouteMetadata) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	table := r.table.Load().(*routingTable)
+	table := r.table.Load()
 
 	// Find the route in the tree and attach metadata
 	if tree, ok := table.trees[method]; ok {
@@ -283,14 +283,14 @@ func (g *Group) AddRoute(method, path string, handler HandlerFunc, middleware ..
 }
 
 // ServeHTTP implements http.Handler interface.
-// Uses atomic.Load() for zero-lock reads, achieving 23x better performance
+// Uses atomic.Pointer for zero-lock, type-safe reads, achieving 23x better performance
 // under concurrent load compared to the previous RWMutex implementation.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx := NewContext(w, req)
 	defer ctx.Release() // Return context to pool when done
 
-	// Zero-lock read: single atomic load operation (23x faster than RWMutex)
-	table := r.table.Load().(*routingTable)
+	// Zero-lock read: single atomic load operation (type-safe, no assertion needed)
+	table := r.table.Load()
 
 	// Fast path: Try exact match first (O(1) for static routes)
 	if exactRoutes := table.exactRoutes[req.Method]; exactRoutes != nil {
@@ -401,7 +401,7 @@ func (r *Router) NotFound(handler HandlerFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	
-	old := r.table.Load().(*routingTable)
+	old := r.table.Load()
 	
 	new := &routingTable{
 		exactRoutes: old.exactRoutes,

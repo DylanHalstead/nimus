@@ -168,7 +168,7 @@ func (r *Router) GenerateOpenAPI(config OpenAPIConfig) *OpenAPISpec {
 
 // generatePathsFromRoutes processes routes and generates OpenAPI paths
 func (r *Router) generatePathsFromRoutes(spec *OpenAPISpec) {
-	table := r.table.Load().(*routingTable)
+	table := r.table.Load()
 
 	// Iterate through all methods and their route trees
 	for method, tree := range table.trees {
