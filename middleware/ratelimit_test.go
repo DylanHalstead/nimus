@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ func TestNewRateLimiter(t *testing.T) {
 	rate := 10
 	capacity := 20
 	limiter := NewRateLimiter(rate, capacity)
+	defer limiter.Close()
 
 	if limiter == nil {
 		t.Fatal("expected limiter, got nil")
@@ -26,9 +28,9 @@ func TestNewRateLimiter(t *testing.T) {
 		t.Errorf("expected capacity %d, got %d", capacity, limiter.capacity)
 	}
 
-	if limiter.buckets == nil {
-		t.Error("expected buckets map to be initialized")
-	}
+	// sync.Map is always initialized (not nil-able)
+	// Just verify we can use it
+	limiter.allow("test")
 
 	if limiter.cleanup != time.Minute*5 {
 		t.Errorf("expected cleanup duration %v, got %v", time.Minute*5, limiter.cleanup)
@@ -37,30 +39,32 @@ func TestNewRateLimiter(t *testing.T) {
 
 func TestRateLimiter_Allow_FirstRequest(t *testing.T) {
 	limiter := NewRateLimiter(10, 20)
+	defer limiter.Close()
 
 	if !limiter.allow("test-key") {
 		t.Error("first request should be allowed")
 	}
 
-	// Check bucket was created
-	limiter.mu.Lock()
-	bucket, exists := limiter.buckets["test-key"]
-	limiter.mu.Unlock()
-
+	// Check bucket was created (lock-free load from sync.Map)
+	value, exists := limiter.buckets.Load("test-key")
 	if !exists {
 		t.Error("bucket should be created for new key")
 	}
 
+	bucket := value.(*bucket)
+
 	// Should have capacity - 1 tokens left
-	expectedTokens := 19
-	if bucket.tokens != expectedTokens {
-		t.Errorf("expected %d tokens, got %d", expectedTokens, bucket.tokens)
+	expectedTokens := int64(19)
+	actualTokens := bucket.tokens.Load()
+	if actualTokens != expectedTokens {
+		t.Errorf("expected %d tokens, got %d", expectedTokens, actualTokens)
 	}
 }
 
 func TestRateLimiter_Allow_BurstCapacity(t *testing.T) {
 	capacity := 5
 	limiter := NewRateLimiter(1, capacity)
+	defer limiter.Close()
 	key := "test-key"
 
 	// Should allow 'capacity' number of requests immediately
@@ -80,6 +84,7 @@ func TestRateLimiter_Allow_TokenRefill(t *testing.T) {
 	rate := 10 // 10 tokens per second
 	capacity := 10
 	limiter := NewRateLimiter(rate, capacity)
+	defer limiter.Close()
 	key := "test-key"
 
 	// Exhaust the bucket
@@ -103,6 +108,7 @@ func TestRateLimiter_Allow_TokenRefill(t *testing.T) {
 
 func TestRateLimiter_Allow_MultipleKeys(t *testing.T) {
 	limiter := NewRateLimiter(10, 5)
+	defer limiter.Close()
 
 	keys := []string{"key1", "key2", "key3"}
 
@@ -120,18 +126,22 @@ func TestRateLimiter_Allow_MultipleKeys(t *testing.T) {
 		}
 	}
 
-	// Verify separate buckets were created
-	limiter.mu.Lock()
-	if len(limiter.buckets) != len(keys) {
-		t.Errorf("expected %d buckets, got %d", len(keys), len(limiter.buckets))
+	// Verify separate buckets were created (count entries in sync.Map)
+	count := 0
+	limiter.buckets.Range(func(key, value any) bool {
+		count++
+		return true
+	})
+	if count != len(keys) {
+		t.Errorf("expected %d buckets, got %d", len(keys), count)
 	}
-	limiter.mu.Unlock()
 }
 
 func TestRateLimiter_TokenRefillDoesNotExceedCapacity(t *testing.T) {
 	rate := 100 // 100 tokens per second
 	capacity := 5
 	limiter := NewRateLimiter(rate, capacity)
+	defer limiter.Close()
 	key := "test-key"
 
 	// Use one token
@@ -420,7 +430,7 @@ func TestRateLimiter_CleanupGoroutineStopped(t *testing.T) {
 	// This test verifies the goroutine actually stops
 	// We create a limiter with very short cleanup interval
 	limiter := &RateLimiter{
-		buckets:  make(map[string]*bucket),
+		buckets:  sync.Map{}, // Lock-free map
 		rate:     10,
 		capacity: 20,
 		cleanup:  time.Millisecond * 10, // Very short for testing
