@@ -228,10 +228,14 @@ func (r *Router) AddRoute(method, path string, handler Handler, middleware ...Mi
 	}
 
 	// Always insert into radix tree as fallback
-	if newTrees[methodHandle] == nil {
+	// Only copies nodes along insertion path
+	if oldTree := old.trees[methodHandle]; oldTree != nil {
+		newTrees[methodHandle] = oldTree.insertWithCopy(path, route)
+	} else {
+		// Create new tree if one doesn't exist for this method
 		newTrees[methodHandle] = newTree()
+		newTrees[methodHandle].insert(path, route)
 	}
-	newTrees[methodHandle].insert(path, route)
 
 	// Copy chains map and add chain for new route
 	newChains := make(map[*Route]Handler, len(old.chains)+1)
@@ -284,7 +288,7 @@ func copyExactRoutes(old map[unique.Handle[string]]map[string]*Route) map[unique
 }
 
 // copyTrees creates a shallow copy of the trees map for copy-on-write.
-// Trees themselves are shared (routes are immutable after registration).
+// The map itself is copied, but tree pointers are shared initially.
 // Uses unique.Handle[string] keys for O(1) pointer-based hashing.
 func copyTrees(old map[unique.Handle[string]]*tree) map[unique.Handle[string]]*tree {
 	if old == nil {
