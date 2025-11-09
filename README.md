@@ -706,104 +706,6 @@ router.Shutdown()         // Stop rate limiters, cleanup goroutines
 srv.Shutdown(shutdownCtx) // Stop accepting new requests
 ```
 
-## Modern Go Features Showcase
-
-Nimbus demonstrates cutting-edge Go patterns from recent versions:
-
-### Go 1.24 Features
-```go
-// 1. unique package for string interning
-import "unique"
-
-var methodGET = unique.Make(http.MethodGet)  // Pre-intern at package level
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-    methodHandle := getMethodHandle(req.Method)  // O(1) pointer comparison
-    routes := table.exactRoutes[methodHandle]    // Pointer-based hashing
-}
-
-// Performance: ~0.3ns vs ~10-20ns for string comparison
-```
-
-### Go 1.21 Features
-```go
-// 1. clear() builtin for O(1) map clearing
-func (c *Context) reset() {
-    clear(c.PathParams)  // Faster than recreating
-    clear(c.values)
-}
-
-// 2. min() builtin
-func min(a, b int) int {
-    return min(a, b)  // Built-in, no need for custom function
-}
-```
-
-### Go 1.19 Features
-```go
-// atomic.Pointer[T] - type-safe atomic operations
-type Router struct {
-    table atomic.Pointer[routingTable]  // No interface{} needed
-}
-
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-    table := r.table.Load()  // Type-safe, zero-cost
-    // No type assertion needed!
-}
-```
-
-### Go 1.18 Features (Generics)
-```go
-// Type-safe validators with generics
-type Validator[T any] struct {
-    Schema  *Schema
-    Factory func() *T
-}
-
-func NewValidator[T any](example *T) *Validator[T] {
-    return &Validator[T]{
-        Schema:  NewSchema(example),
-        Factory: func() *T { return new(T) },
-    }
-}
-
-// Type-safe handlers
-func WithTyped[P any, B any, Q any](
-    handler HandlerFuncTyped[P, B, Q],
-    params *Validator[P],
-    body *Validator[B],
-    query *Validator[Q],
-) Handler {
-    // Compile-time type checking, zero runtime overhead
-}
-```
-
-## Design Philosophy Alignment
-
-Nimbus follows Go's core principles:
-
-- ✅ **Simplicity:** Clear, readable code with minimal magic
-- ✅ **Composition:** Middleware pattern over inheritance
-- ✅ **Concurrency:** Lock-free design with atomic operations
-- ✅ **Explicit errors:** All errors are values, never panics in production
-- ✅ **Zero dependencies:** Only stdlib + zerolog for logging
-- ✅ **Performance:** Minimize allocations, maximize throughput
-- ✅ **Modern idioms:** Uses Go 1.24+ features like `unique.Handle` and `atomic.Pointer[T]`
-
-## When to Use Nimbus
-
-**✅ Great fit:**
-- High-traffic REST APIs
-- Microservices requiring low latency
-- Systems with strict performance requirements
-- Teams wanting type-safe request handling
-- Projects needing OpenAPI documentation
-
-**❌ Consider alternatives:**
-- GraphQL or gRPC services
-- HTML template rendering (use gin/echo)
-- WebSocket-heavy applications
-- Rapid prototyping with less performance concern
-
 ## Limitations & Trade-offs
 
 - **Route registration:** Best done at startup. Adding routes at runtime copies maps (CoW overhead).
@@ -812,62 +714,21 @@ Nimbus follows Go's core principles:
 - **Middleware order:** Last-in-first-out execution (wrapping pattern) can be unintuitive.
 - **Context not goroutine-safe:** Don't access `Context` from multiple goroutines (standard for Go HTTP handlers).
 
-## Design Principles & Modern Go Patterns
-
-Nimbus follows Go's design philosophy and leverages modern language features:
-
-### ✅ **What Makes This Idiomatic Go**
-
-1. **Lock-Free Concurrency (Go 1.19+)**
-   - Uses `atomic.Pointer[T]` for type-safe, lock-free reads
-   - Copy-on-Write with immutable data structures
-   - Zero contention on hot path
-
-2. **String Interning (Go 1.24+)**
-   - `unique.Handle[string]` for O(1) pointer-based comparison
-   - Pre-interned HTTP methods at package level
-   - 30-60x faster than string comparison
-
-3. **Memory Efficiency (Go 1.21+)**
-   - `clear()` builtin for O(1) map reuse
-   - Lazy allocation (nil until needed)
-   - Smart pool management (reuse small maps, recreate large ones)
-
-4. **Composition Over Inheritance**
-   - Middleware as functions, not classes
-   - No OOP hierarchies, just composable functions
-
-5. **Concurrency as First-Class**
-   - Lock-free rate limiter with CAS loops
-   - Atomic operations everywhere
-   - `sync.Map` for concurrent bucket storage
-
-6. **Explicit Error Handling**
-   - All errors are values
-   - No panics in hot path (only during config validation)
-   - Clear error propagation
-
-### 🔧 **Known Areas for Improvement**
+## 🔧 **Known Areas for Improvement**
 
 These are documented design limitations that don't affect typical use cases but could be improved:
 
-1. **Radix Tree Needs Deep Copy** ⚠️
-   - Current: Shallow copy during route registration
-   - Impact: Potential race if routes are added while serving (rare)
-   - Fix: Implement `tree.clone()` for true CoW semantics
-   - Mitigation: Register all routes at startup (recommended pattern)
-
-2. **OpenAPI Generation Misses Static Routes** ⚠️
+1. **OpenAPI Generation Misses Static Routes** ⚠️
    - Current: Only iterates tree routes, not `exactRoutes` map
    - Impact: Static routes won't appear in Swagger docs
    - Fix: Add iteration over `exactRoutes` in `generatePathsFromRoutes()`
 
-3. **Validator Uses Reflection** ⚠️
+2. **Validator Uses Reflection** ⚠️
    - Current: Runtime reflection for validation (~200-500ns per field)
    - Impact: Adds ~2-5µs for 10-field struct
    - Future: Consider code generation for zero-overhead validation
 
-4. **No context.Context Integration** ⚠️
+3. **No context.Context Integration** ⚠️
    - Current: Access via `ctx.Request.Context()`
    - Better: Add `ctx.Context()` helper for middleware-derived contexts
    - Impact: Slightly less ergonomic for timeout middleware
@@ -935,43 +796,14 @@ nimbus/
         └── products.go    # Product API with rate limiting
 ```
 
-## Testing
-
-Run the full test suite:
-
-```bash
-# All tests
-go test ./...
-
-# With coverage
-go test -cover ./...
-
-# Benchmarks
-go test -bench=. -benchmem ./...
-
-# Specific benchmark
-go test -bench=BenchmarkRouter_StaticRoutes -benchtime=3s
-```
-
-## Contributing
-
-Contributions welcome! Key areas:
-
-1. **Performance:** Profiling and optimizations
-2. **Middleware:** New middleware implementations
-3. **Documentation:** Examples and tutorials
-4. **Testing:** More comprehensive test coverage
-
 ## Roadmap
 
 ### High Priority (Performance & Correctness)
-- [ ] **Fix radix tree deep copy** - Implement `tree.clone()` for proper CoW semantics
 - [ ] **Fix OpenAPI static routes** - Include `exactRoutes` in spec generation
 - [ ] **Add context.Context helpers** - `ctx.Context()` and `ctx.WithContext()` methods
 - [ ] **Implement wildcard route matching** - Complete `*path` catch-all support in tree search
 
 ### Medium Priority (Features)
-- [x] ~~Request body size limits~~ ✅ **Done** - `BodyLimit` middleware added
 - [ ] Response compression middleware (gzip, brotli)
 - [ ] Circuit breaker middleware (with backoff)
 - [ ] Retry middleware with exponential backoff
@@ -986,32 +818,6 @@ Contributions welcome! Key areas:
 - [ ] Code generation for validators (zero-overhead)
 - [ ] HTTP/3 (QUIC) support
 - [ ] Server-Sent Events (SSE) helpers
-
-### Optimizations
-- [ ] Use Go 1.25's iterator pattern for route collection
-- [ ] Benchmark `slices.Contains` vs loop for skip paths
-- [ ] Consider pre-building skip path maps in middleware configs
-- [ ] Profile-guided optimization (PGO) examples and benchmarks
-
-## Comparisons
-
-### vs Chi
-- **Nimbus:** Lock-free, pre-compiled chains, typed handlers
-- **Chi:** Mutex-based, runtime composition, simpler API
-
-### vs Echo
-- **Nimbus:** Minimal dependencies, OpenAPI generation, performance-focused
-- **Echo:** More features, HTML templating, larger ecosystem
-
-### vs Gin
-- **Nimbus:** Lock-free, generics-based validation, ~3x faster routing
-- **Gin:** Battle-tested, large community, more middleware options
-
-### vs Fiber
-- **Nimbus:** Standard `net/http`, Go conventions, better for microservices
-- **Fiber:** fasthttp-based, Express-like API, higher raw throughput
-
-**Choose Nimbus if:** Performance, type safety, and OpenAPI generation matter more than ecosystem size.
 
 ## Performance Tips
 
@@ -1088,33 +894,3 @@ func (v *CustomValidator) ValidateUnique(email string) error {
     return nil
 }
 ```
-
-## FAQ
-
-**Q: Why use `atomic.Pointer` instead of `sync.RWMutex`?**  
-A: Zero lock contention. RWMutex has overhead even for reads under high concurrency. Atomic pointer swaps are lock-free and scale linearly.
-
-**Q: Can I add routes after the server starts?**  
-A: Yes, but there's overhead (copy-on-write). Best practice is to register routes at startup.
-
-**Q: How do I handle file uploads?**  
-A: Use `ctx.Request.ParseMultipartForm()` and access files via `ctx.Request.MultipartForm`.
-
-**Q: Is Nimbus production-ready?**  
-A: Yes. Lock-free design is proven, comprehensive middleware included, and OpenAPI generation simplifies API management.
-
-**Q: Why not use an existing validation library?**  
-A: Built-in validation is optimized for the framework, generates OpenAPI schemas automatically, and has zero external dependencies.
-
-**Q: How do I implement JWT authentication?**  
-A: Use `middleware.AuthWithValidator()` with a JWT parsing function. See [examples/auth](examples/modular/users.go).
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details
-
----
-
-**Built with ❤️ and ⚡ in Go**
-
-For questions, issues, or feature requests, please open an issue on GitHub.
