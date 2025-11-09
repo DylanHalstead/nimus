@@ -170,15 +170,40 @@ func (r *Router) GenerateOpenAPI(config OpenAPIConfig) *OpenAPISpec {
 func (r *Router) generatePathsFromRoutes(spec *OpenAPISpec) {
 	table := r.table.Load()
 
-	// Iterate through all methods and their route trees
-	for methodHandle, tree := range table.trees {
-		// Collect all routes from the tree
-		routes := tree.collectRoutes()
+	// Collect all routes from both exactRoutes (static) and trees (dynamic)
+	allRoutes := make(map[string]map[string]*Route) // method -> path -> route
 
-		// Get the string value from the handle for comparison
+	// Collect static routes from exactRoutes
+	for methodHandle, pathMap := range table.exactRoutes {
 		method := methodHandle.Value()
+		if allRoutes[method] == nil {
+			allRoutes[method] = make(map[string]*Route)
+		}
+		for path, route := range pathMap {
+			allRoutes[method][path] = route
+		}
+	}
 
+	// Collect dynamic routes from trees
+	for methodHandle, tree := range table.trees {
+		method := methodHandle.Value()
+		routes := tree.collectRoutes()
+		
+		if allRoutes[method] == nil {
+			allRoutes[method] = make(map[string]*Route)
+		}
+		
 		for _, route := range routes {
+			// Only add if not already present (exactRoutes takes precedence to avoid duplicates)
+			if _, exists := allRoutes[method][route.pattern]; !exists {
+				allRoutes[method][route.pattern] = route
+			}
+		}
+	}
+
+	// Process all collected routes
+	for method, pathMap := range allRoutes {
+		for _, route := range pathMap {
 			// Convert path parameters from :param to {param}
 			openAPIPath := convertPathParams(route.pattern)
 

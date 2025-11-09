@@ -289,3 +289,119 @@ func TestSchemaToQueryParameters(t *testing.T) {
 		t.Error("Expected to find 'page' parameter")
 	}
 }
+
+// TestStaticAndDynamicRoutes verifies that both static routes and dynamic routes
+// are properly collected in OpenAPI spec generation
+func TestStaticAndDynamicRoutes(t *testing.T) {
+	router := NewRouter()
+
+	// Add static routes (stored in exactRoutes map)
+	router.AddRoute(http.MethodGet, "/health", func(ctx *Context) (any, int, error) {
+		return map[string]string{"status": "ok"}, http.StatusOK, nil
+	})
+	router.Route("GET", "/health").WithDoc(RouteMetadata{
+		Summary: "Health check",
+		Tags:    []string{"system"},
+	})
+
+	router.AddRoute(http.MethodGet, "/api/status", func(ctx *Context) (any, int, error) {
+		return map[string]string{"status": "running"}, http.StatusOK, nil
+	})
+	router.Route("GET", "/api/status").WithDoc(RouteMetadata{
+		Summary: "API status",
+		Tags:    []string{"system"},
+	})
+
+	// Add dynamic routes (stored in trees)
+	router.AddRoute(http.MethodGet, "/users/:id", func(ctx *Context) (any, int, error) {
+		return nil, http.StatusOK, nil
+	})
+	router.Route("GET", "/users/:id").WithDoc(RouteMetadata{
+		Summary: "Get user by ID",
+		Tags:    []string{"users"},
+	})
+
+	router.AddRoute(http.MethodGet, "/posts/:postId/comments/:commentId", func(ctx *Context) (any, int, error) {
+		return nil, http.StatusOK, nil
+	})
+	router.Route("GET", "/posts/:postId/comments/:commentId").WithDoc(RouteMetadata{
+		Summary: "Get comment",
+		Tags:    []string{"comments"},
+	})
+
+	// Generate OpenAPI spec
+	config := OpenAPIConfig{
+		Title:       "Test API",
+		Description: "Testing static and dynamic routes",
+		Version:     "1.0.0",
+	}
+
+	spec := router.GenerateOpenAPI(config)
+
+	// Verify all routes are present
+	expectedPaths := map[string]bool{
+		"/health":                         false,
+		"/api/status":                     false,
+		"/users/{id}":                     false,
+		"/posts/{postId}/comments/{commentId}": false,
+	}
+
+	for path := range spec.Paths {
+		if _, exists := expectedPaths[path]; exists {
+			expectedPaths[path] = true
+		}
+	}
+
+	// Check that all expected paths were found
+	for path, found := range expectedPaths {
+		if !found {
+			t.Errorf("Expected path '%s' to be present in OpenAPI spec", path)
+		}
+	}
+
+	// Verify static route has correct metadata
+	if healthPath, ok := spec.Paths["/health"]; ok {
+		if healthPath.GET == nil {
+			t.Error("Expected GET operation for /health")
+		} else if healthPath.GET.Summary != "Health check" {
+			t.Errorf("Expected summary 'Health check', got '%s'", healthPath.GET.Summary)
+		}
+	}
+
+	// Verify dynamic route has path parameters
+	if userPath, ok := spec.Paths["/users/{id}"]; ok {
+		if userPath.GET == nil {
+			t.Error("Expected GET operation for /users/{id}")
+		} else {
+			foundParam := false
+			for _, param := range userPath.GET.Parameters {
+				if param.Name == "id" && param.In == "path" && param.Required {
+					foundParam = true
+					break
+				}
+			}
+			if !foundParam {
+				t.Error("Expected path parameter 'id' to be present and required")
+			}
+		}
+	}
+
+	// Verify route with multiple path parameters
+	if commentPath, ok := spec.Paths["/posts/{postId}/comments/{commentId}"]; ok {
+		if commentPath.GET == nil {
+			t.Error("Expected GET operation for /posts/{postId}/comments/{commentId}")
+		} else {
+			paramCount := 0
+			for _, param := range commentPath.GET.Parameters {
+				if param.In == "path" && param.Required {
+					if param.Name == "postId" || param.Name == "commentId" {
+						paramCount++
+					}
+				}
+			}
+			if paramCount != 2 {
+				t.Errorf("Expected 2 path parameters, found %d", paramCount)
+			}
+		}
+	}
+}
