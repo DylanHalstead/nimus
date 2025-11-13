@@ -131,7 +131,7 @@ router.Route(http.MethodGet, "/users/:id").WithDoc(nimbus.RouteMetadata{
 
 ## 📖 Examples
 
-See the [`examples/`](examples/) subdirectory for complete examples of API structure
+See the [`_examples/`](_examples/) subdirectory for complete examples of API structure
 
 ## ⚠️ Best Practices & Common Pitfalls
 
