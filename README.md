@@ -396,6 +396,42 @@ flowchart TB
 - Predictable, consistent latency
 - Scales linearly with CPU cores
 
+### Radix Tree Structure
+
+Dynamic routes with path parameters (`:id`, `:slug`, etc.) are stored in a [radix tree](https://en.wikipedia.org/wiki/Radix_tree) (also called a prefix tree or compressed trie). The tree efficiently handles route matching by sharing common prefixes and extracting parameters during traversal.
+
+#### How Routes Are Organized
+
+Consider these registered routes:
+
+```go
+router.AddRoute(http.MethodGet, "/users/:id", getUser)
+router.AddRoute(http.MethodGet, "/users/:id/posts", getUserPosts)
+router.AddRoute(http.MethodGet, "/users/:id/posts/:pid", getPost)
+router.AddRoute(http.MethodGet, "/products/:slug", getProduct)
+router.AddRoute(http.MethodGet, "/products/:slug/reviews", getReviews)
+```
+
+They are stored in a radix tree like this:
+
+```mermaid
+graph TB
+    Root(["/"]) --> Users["users/"]
+    Root --> Products["products/"]
+    
+    Users --> UserID[":id"]
+    UserID -->|match| UserHandler["✓ Handler: getUser<br/>Params: id"]
+    UserID --> UserPosts["posts"]
+    UserPosts -->|match| PostsHandler["✓ Handler: getUserPosts<br/>Params: id"]
+    UserPosts --> PostID[":pid"]
+    PostID -->|match| PostHandler["✓ Handler: getPost<br/>Params: id, pid"]
+    
+    Products --> ProductSlug[":slug"]
+    ProductSlug -->|match| ProductHandler["✓ Handler: getProduct<br/>Params: slug"]
+    ProductSlug --> Reviews["reviews"]
+    Reviews -->|match| ReviewsHandler["✓ Handler: getReviews<br/>Params: slug"]
+```
+
 ### Request Flow
 
 ```mermaid
